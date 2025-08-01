@@ -1,28 +1,24 @@
 {
-  "name": "minecraft-crossplay-server",
+  "name": "mine-host",
   "version": "1.0.0",
-  "description": "Minecraft Crossplay Server with Java and Bedrock support",
-  "main": "server.js",
+  "description": "",
+  "main": "index.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
   },
-  "keywords": [
-    "minecraft",
-    "server",
-    "crossplay",
-    "bedrock",
-    "java"
-  ],
-  "author": "SUBHAJEET",
-  "license": "MIT",
-  "engines": {
-    "node": ">=18.0.0"
-  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
   "dependencies": {
-    "express": "^4.18.2",
-    "socket.io": "^4.7.5",
+    "bedrock-protocol": "^3.47.0",
+    "child_process": "^1.0.2",
     "cors": "^2.8.5",
-    "minecraft-protocol": "^1.47.0"
+    "express": "^5.1.0",
+    "minecraft-protocol": "^1.58.0",
+    "minecraft-server-util": "^5.4.4",
+    "minecraft-status": "^1.1.0",
+    "socket.io": "^4.8.1"
   }
 }
