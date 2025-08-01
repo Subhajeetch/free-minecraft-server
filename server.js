@@ -11,7 +11,7 @@ class MinecraftCrossplayServer {
         this.serverPath = './minecraft-server';
         this.jarFile = 'paper-server.jar';
 
-        // Use environment variables for Koyeb deployment
+        // Use environment variables for deployment
         this.javaPort = process.env.MINECRAFT_PORT || 25565;
         this.bedrockPort = process.env.BEDROCK_PORT || 19132;
         this.webPort = process.env.PORT || 3000;
@@ -21,7 +21,8 @@ class MinecraftCrossplayServer {
         this.serverStatus = 'offline';
         this.startTime = null;
         this.serverReady = false;
-        this.isKoyeb = process.env.KOYEB_PUBLIC_DOMAIN || process.env.NODE_ENV === 'production';
+        this.isKoyeb = process.env.NODE_ENV === 'production';
+        this.javaInstalled = true; // Docker ensures Java is available
 
         this.setupExpress();
         this.setupRoutes();
@@ -32,84 +33,6 @@ class MinecraftCrossplayServer {
         if (this.isKoyeb) {
             this.downloadRequiredFiles();
         }
-    }
-
-
-    async initializeServer() {
-        console.log('🔧 Initializing server for cloud deployment...');
-
-        // Check for Java installation first
-        await this.checkAndInstallJava();
-
-        // Then download required files
-        await this.downloadRequiredFiles();
-    }
-
-    async checkAndInstallJava() {
-        return new Promise((resolve) => {
-            exec('java -version', (error, stdout, stderr) => {
-                if (error) {
-                    console.log('❌ Java not found. Attempting to install...');
-                    this.installJava().then((success) => {
-                        this.javaInstalled = success;
-                        resolve(success);
-                    }).catch(() => {
-                        this.javaInstalled = false;
-                        resolve(false);
-                    });
-                } else {
-                    console.log('✅ Java found:', stderr.split('\n')[0]);
-                    this.javaInstalled = true;
-                    resolve(true);
-                }
-            });
-        });
-    }
-
-    async installJava() {
-        return new Promise((resolve, reject) => {
-            console.log('📥 Installing OpenJDK...');
-
-            const installCommands = [
-                'apt-get update && apt-get install -y openjdk-21-jre-headless',
-                'apk add --no-cache openjdk21-jre',
-                'yum install -y java-21-openjdk-headless',
-                'dnf install -y java-21-openjdk-headless'
-            ];
-
-            let attempts = 0;
-
-            const tryInstall = () => {
-                if (attempts >= installCommands.length) {
-                    console.error('❌ Failed to install Java with all methods');
-                    resolve(false);
-                    return;
-                }
-
-                console.log(`🔄 Trying installation method ${attempts + 1}...`);
-                exec(installCommands[attempts], { timeout: 60000 }, (error, stdout, stderr) => {
-                    if (error) {
-                        console.log(`❌ Installation method ${attempts + 1} failed:`, error.message);
-                        attempts++;
-                        tryInstall();
-                    } else {
-                        console.log('✅ Java installed successfully');
-                        // Verify installation
-                        exec('java -version', (verifyError, verifyStdout, verifyStderr) => {
-                            if (verifyError) {
-                                console.log('❌ Java installation verification failed');
-                                resolve(false);
-                            } else {
-                                console.log('✅ Java installation verified:', verifyStderr.split('\n')[0]);
-                                resolve(true);
-                            }
-                        });
-                    }
-                });
-            };
-
-            tryInstall();
-        });
     }
 
     getLocalIP() {
@@ -347,13 +270,6 @@ class MinecraftCrossplayServer {
                 });
             }
 
-            if (this.isKoyeb && !this.javaInstalled) {
-                return res.json({
-                    success: false,
-                    message: 'Java is not installed. Please wait for initialization to complete.'
-                });
-            }
-
             this.startMinecraftServer();
             res.json({
                 success: true,
@@ -402,13 +318,13 @@ server-ip=0.0.0.0
 server-port=${this.javaPort}
 gamemode=survival
 difficulty=easy
-max-players=${this.isKoyeb ? 15 : 20}
-motd=§aCrossplay Server §7| §e${this.isKoyeb ? 'Koyeb Hosted' : 'Self Hosted'} §7| §bALL VERSIONS
-server-name=${this.isKoyeb ? 'KoyebCrossplayServer' : 'CrossplayServer'}
+max-players=15
+motd=§aCrossplay Server §7| §eDocker Hosted §7| §bALL VERSIONS
+server-name=DockerCrossplayServer
 online-mode=false
 enforce-whitelist=false
-view-distance=${this.isKoyeb ? 8 : 10}
-simulation-distance=${this.isKoyeb ? 6 : 10}
+view-distance=8
+simulation-distance=6
 enable-query=true
 query.port=${this.javaPort}
 level-name=world
@@ -435,51 +351,28 @@ prevent-proxy-connections=false
             return;
         }
 
-        // Double-check Java installation before starting
-        if (this.isKoyeb && !this.javaInstalled) {
-            console.log('🔄 Checking Java installation...');
-            const javaAvailable = await this.checkAndInstallJava();
-            if (!javaAvailable) {
-                console.error('❌ Java installation failed. Cannot start Minecraft server.');
-                console.log('💡 Please check the build logs and consider using multi-buildpack approach.');
-                return;
-            }
-        }
-
         this.serverStatus = 'starting';
         this.serverReady = false;
         this.startTime = Date.now();
 
         console.log('\n' + '='.repeat(60));
-        console.log(`🚀 STARTING ${this.isKoyeb ? 'KOYEB' : ''} MINECRAFT CROSSPLAY SERVER`);
+        console.log('🚀 STARTING DOCKER MINECRAFT CROSSPLAY SERVER');
         console.log('='.repeat(60));
         console.log('📡 Status: STARTING...');
         console.log(`🏠 Local IP: ${this.localIP}`);
         console.log(`🌐 Public IP: ${this.publicIP || 'Detecting...'}`);
-        if (this.isKoyeb) {
-            console.log('☁️  Running on Koyeb Cloud Platform');
-            console.log(`☀️  Java Available: ${this.javaInstalled ? 'Yes' : 'No'}`);
-        }
+        console.log('🐳 Running in Docker Container');
         console.log('⏳ Please wait while server initializes...');
         console.log('='.repeat(60));
 
-        // Optimized JVM arguments for different environments
-        const javaArgs = this.isKoyeb ? [
-            '-Xmx1G',           // Reduced memory for Koyeb
+        // Optimized JVM arguments for Docker
+        const javaArgs = [
+            '-Xmx1G',
             '-Xms512M',
             '-XX:+UseG1GC',
             '-XX:+UseStringDeduplication',
             '-XX:MaxGCPauseMillis=200',
             '-XX:+DisableExplicitGC',
-            '-jar',
-            this.jarFile,
-            'nogui'
-        ] : [
-            '-Xmx3G',
-            '-Xms1G',
-            '-XX:+UseG1GC',
-            '-XX:+UnlockExperimentalVMOptions',
-            '-XX:MaxGCPauseMillis=100',
             '-jar',
             this.jarFile,
             'nogui'
@@ -499,7 +392,7 @@ prevent-proxy-connections=false
                 this.serverStatus = 'online';
                 this.serverReady = true;
                 console.log('\n' + '🎉'.repeat(20));
-                console.log(`✅ ${this.isKoyeb ? 'KOYEB' : ''} SERVER IS NOW ONLINE!`);
+                console.log('✅ DOCKER SERVER IS NOW ONLINE!');
                 console.log('🎉'.repeat(20));
                 this.displayConnectionInfo();
             }
@@ -522,12 +415,6 @@ prevent-proxy-connections=false
 
         this.minecraftProcess.on('error', (error) => {
             console.error(`❌ Failed to start Minecraft server:`, error.message);
-            if (error.code === 'ENOENT') {
-                console.error('💡 Java not found. Make sure Java is installed and in PATH.');
-                if (this.isKoyeb) {
-                    console.error('💡 Consider using multi-buildpack with Java support.');
-                }
-            }
             this.serverStatus = 'offline';
             this.serverReady = false;
             this.startTime = null;
@@ -543,13 +430,11 @@ prevent-proxy-connections=false
             if (code !== 0) {
                 console.log('💥 Server crashed! Check the error messages above.');
 
-                // Auto-restart on crash for Koyeb (but not if Java is missing)
-                if (this.isKoyeb && this.javaInstalled) {
-                    console.log('🔄 Auto-restarting in 15 seconds...');
-                    setTimeout(() => {
-                        this.startMinecraftServer();
-                    }, 15000);
-                }
+                // Auto-restart on crash
+                console.log('🔄 Auto-restarting in 15 seconds...');
+                setTimeout(() => {
+                    this.startMinecraftServer();
+                }, 15000);
             } else {
                 console.log('✅ Server stopped normally.');
             }
@@ -558,38 +443,29 @@ prevent-proxy-connections=false
 
     displayConnectionInfo() {
         console.log('\n' + '='.repeat(70));
-        console.log(`🎮 MINECRAFT CROSSPLAY SERVER IS ONLINE! ${this.isKoyeb ? '(KOYEB)' : ''} 🎮`);
+        console.log('🎮 MINECRAFT CROSSPLAY SERVER IS ONLINE! (DOCKER) 🎮');
         console.log('='.repeat(70));
 
         console.log('\n📱 JAVA EDITION CONNECTIONS:');
         console.log(`   🏠 Local: localhost:${this.javaPort}`);
         console.log(`   🏘️  Network: ${this.localIP}:${this.javaPort}`);
         if (this.publicIP && this.publicIP !== 'Unable to detect') {
-            const note = this.isKoyeb ? '' : ' (requires port forwarding)';
-            console.log(`   🌐 Internet: ${this.publicIP}:${this.javaPort}${note}`);
+            console.log(`   🌐 Internet: ${this.publicIP}:${this.javaPort}`);
         }
 
         console.log('\n🎯 BEDROCK EDITION CONNECTIONS:');
         console.log(`   🏠 Local: localhost:${this.bedrockPort}`);
         console.log(`   🏘️  Network: ${this.localIP}:${this.bedrockPort}`);
         if (this.publicIP && this.publicIP !== 'Unable to detect') {
-            const note = this.isKoyeb ? '' : ' (requires port forwarding)';
-            console.log(`   🌐 Internet: ${this.publicIP}:${this.bedrockPort}${note}`);
+            console.log(`   🌐 Internet: ${this.publicIP}:${this.bedrockPort}`);
         }
 
-        console.log(`\n🌐 Management Panel: ${this.isKoyeb ? `https://${this.publicIP}` : 'http://localhost:3000'}`);
+        console.log(`\n🌐 Management Panel: https://${this.publicIP}`);
 
-        if (this.isKoyeb) {
-            console.log('\n📋 SHARE WITH FRIENDS (KOYEB HOSTED):');
-            console.log(`   Java Edition: ${this.publicIP}:${this.javaPort}`);
-            console.log(`   Bedrock Edition: ${this.publicIP}:${this.bedrockPort}`);
-            console.log('   ✅ No port forwarding needed!');
-        } else {
-            console.log('\n📋 FOR FRIENDS TO JOIN:');
-            console.log('   1. Share your public IP with friends');
-            console.log('   2. Set up port forwarding on your router');
-            console.log('   3. Ports to forward: 25565 (Java) & 19132 (Bedrock)');
-        }
+        console.log('\n📋 SHARE WITH FRIENDS (KOYEB HOSTED):');
+        console.log(`   Java Edition: ${this.publicIP}:${this.javaPort}`);
+        console.log(`   Bedrock Edition: ${this.publicIP}:${this.bedrockPort}`);
+        console.log('   ✅ No port forwarding needed!');
 
         console.log('\n🎯 SUPPORTED VERSIONS:');
         console.log('   📱 Java Edition: 1.8.x to 1.21.x (ALL VERSIONS)');
@@ -616,13 +492,8 @@ prevent-proxy-connections=false
         const finalPort = port || this.webPort;
         this.app.listen(finalPort, '0.0.0.0', () => {
             console.log(`🚀 Minecraft Server Manager running on port ${finalPort}`);
-            if (this.isKoyeb) {
-                console.log(`☁️  Koyeb deployment detected`);
-                console.log(`🌐 Public URL will be available after deployment`);
-            } else {
-                console.log(`📱 Local access: http://localhost:${finalPort}`);
-                console.log(`🌐 Network access: http://${this.localIP}:${finalPort}`);
-            }
+            console.log(`🐳 Docker deployment detected`);
+            console.log(`🌐 Public URL will be available after deployment`);
             console.log('='.repeat(50));
         });
     }
