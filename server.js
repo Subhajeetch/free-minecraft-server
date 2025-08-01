@@ -379,12 +379,13 @@ prevent-proxy-connections=false
 
         // Optimized JVM arguments for Docker
         const javaArgs = [
-            '-Xmx1G',
-            '-Xms512M',
+            '-Xmx512M',     // Reduced from 1G to 512M
+            '-Xms256M',     // Reduced from 512M to 256M
             '-XX:+UseG1GC',
             '-XX:+UseStringDeduplication',
-            '-XX:MaxGCPauseMillis=200',
+            '-XX:MaxGCPauseMillis=300',    // Increased for lower memory
             '-XX:+DisableExplicitGC',
+            '-XX:+UseCompressedOops',      // Added for memory efficiency
             '-Dfile.encoding=UTF-8',
             '-jar',
             this.jarFile,
