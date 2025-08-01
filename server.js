@@ -23,6 +23,7 @@ class MinecraftCrossplayServer {
         this.serverReady = false;
         this.isKoyeb = process.env.NODE_ENV === 'production';
         this.javaInstalled = true; // Docker ensures Java is available
+        this.restartAttempts = 0; // Track restart attempts
 
         this.setupExpress();
         this.setupRoutes();
@@ -31,7 +32,9 @@ class MinecraftCrossplayServer {
 
         // Download required files for cloud deployment
         if (this.isKoyeb) {
-            this.downloadRequiredFiles();
+            this.downloadRequiredFiles().catch(error => {
+                console.error('❌ Failed to download required files:', error.message);
+            });
         }
     }
 
@@ -219,6 +222,10 @@ class MinecraftCrossplayServer {
         this.app.use(express.json());
         this.app.use(express.static('public'));
 
+        // Add CORS middleware
+        const cors = require('cors');
+        this.app.use(cors());
+
         // Health check endpoint for Koyeb
         this.app.get('/health', (req, res) => {
             res.json({
@@ -231,6 +238,11 @@ class MinecraftCrossplayServer {
     }
 
     setupRoutes() {
+        // Serve the main page
+        this.app.get('/', (req, res) => {
+            res.sendFile(path.join(__dirname, 'public', 'index.html'));
+        });
+
         this.app.get('/status', (req, res) => {
             const uptime = this.startTime ? Math.floor((Date.now() - this.startTime) / 1000) : 0;
             res.json({
@@ -373,6 +385,7 @@ prevent-proxy-connections=false
             '-XX:+UseStringDeduplication',
             '-XX:MaxGCPauseMillis=200',
             '-XX:+DisableExplicitGC',
+            '-Dfile.encoding=UTF-8',
             '-jar',
             this.jarFile,
             'nogui'
@@ -380,7 +393,8 @@ prevent-proxy-connections=false
 
         this.minecraftProcess = spawn('java', javaArgs, {
             cwd: this.serverPath,
-            stdio: ['pipe', 'pipe', 'pipe']
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: { ...process.env, JAVA_HOME: '/usr/lib/jvm/java-21-openjdk' }
         });
 
         this.minecraftProcess.stdout.on('data', (data) => {
@@ -391,6 +405,7 @@ prevent-proxy-connections=false
             if (message.includes('Done (') && message.includes('For help, type "help"')) {
                 this.serverStatus = 'online';
                 this.serverReady = true;
+                this.restartAttempts = 0; // Reset restart attempts on successful start
                 console.log('\n' + '🎉'.repeat(20));
                 console.log('✅ DOCKER SERVER IS NOW ONLINE!');
                 console.log('🎉'.repeat(20));
@@ -415,6 +430,9 @@ prevent-proxy-connections=false
 
         this.minecraftProcess.on('error', (error) => {
             console.error(`❌ Failed to start Minecraft server:`, error.message);
+            if (error.code === 'ENOENT') {
+                console.error('💡 Java not found. Make sure Java is installed and in PATH.');
+            }
             this.serverStatus = 'offline';
             this.serverReady = false;
             this.startTime = null;
@@ -430,13 +448,19 @@ prevent-proxy-connections=false
             if (code !== 0) {
                 console.log('💥 Server crashed! Check the error messages above.');
 
-                // Auto-restart on crash
-                console.log('🔄 Auto-restarting in 15 seconds...');
-                setTimeout(() => {
-                    this.startMinecraftServer();
-                }, 15000);
+                // Auto-restart on crash (limited attempts)
+                if (this.restartAttempts < 3) {
+                    this.restartAttempts++;
+                    console.log(`🔄 Auto-restarting in 15 seconds... (attempt ${this.restartAttempts}/3)`);
+                    setTimeout(() => {
+                        this.startMinecraftServer();
+                    }, 15000);
+                } else {
+                    console.log('❌ Maximum restart attempts reached. Server will remain offline.');
+                }
             } else {
                 console.log('✅ Server stopped normally.');
+                this.restartAttempts = 0; // Reset on normal shutdown
             }
         });
     }
@@ -447,15 +471,11 @@ prevent-proxy-connections=false
         console.log('='.repeat(70));
 
         console.log('\n📱 JAVA EDITION CONNECTIONS:');
-        console.log(`   🏠 Local: localhost:${this.javaPort}`);
-        console.log(`   🏘️  Network: ${this.localIP}:${this.javaPort}`);
         if (this.publicIP && this.publicIP !== 'Unable to detect') {
             console.log(`   🌐 Internet: ${this.publicIP}:${this.javaPort}`);
         }
 
         console.log('\n🎯 BEDROCK EDITION CONNECTIONS:');
-        console.log(`   🏠 Local: localhost:${this.bedrockPort}`);
-        console.log(`   🏘️  Network: ${this.localIP}:${this.bedrockPort}`);
         if (this.publicIP && this.publicIP !== 'Unable to detect') {
             console.log(`   🌐 Internet: ${this.publicIP}:${this.bedrockPort}`);
         }
@@ -478,11 +498,19 @@ prevent-proxy-connections=false
             this.serverStatus = 'stopping';
             console.log('\n⏹️  Stopping Minecraft server...');
             this.minecraftProcess.stdin.write('stop\n');
+
+            // Force kill after 30 seconds if graceful shutdown fails
+            setTimeout(() => {
+                if (this.minecraftProcess) {
+                    console.log('⚠️  Force stopping server...');
+                    this.minecraftProcess.kill('SIGTERM');
+                }
+            }, 30000);
         }
     }
 
     executeCommand(command) {
-        if (this.minecraftProcess && this.serverReady) {
+        if (this.minecraftProcess && this.serverReady && command) {
             this.minecraftProcess.stdin.write(`${command}\n`);
             console.log(`[COMMAND]: ${command}`);
         }
@@ -490,7 +518,26 @@ prevent-proxy-connections=false
 
     start(port) {
         const finalPort = port || this.webPort;
-        this.app.listen(finalPort, '0.0.0.0', () => {
+
+        // Handle graceful shutdown
+        process.on('SIGTERM', () => {
+            console.log('📡 Received SIGTERM. Gracefully shutting down...');
+            this.stopMinecraftServer();
+            process.exit(0);
+        });
+
+        process.on('SIGINT', () => {
+            console.log('📡 Received SIGINT. Gracefully shutting down...');
+            this.stopMinecraftServer();
+            process.exit(0);
+        });
+
+        this.app.listen(finalPort, '0.0.0.0', (err) => {
+            if (err) {
+                console.error('❌ Failed to start web server:', err);
+                process.exit(1);
+            }
+
             console.log(`🚀 Minecraft Server Manager running on port ${finalPort}`);
             console.log(`🐳 Docker deployment detected`);
             console.log(`🌐 Public URL will be available after deployment`);
