@@ -377,16 +377,16 @@ prevent-proxy-connections=false
         console.log('⏳ Please wait while server initializes...');
         console.log('='.repeat(60));
 
-        // Optimized JVM arguments for Docker
         const javaArgs = [
-            '-Xmx512M',     // Reduced from 1G to 512M
-            '-Xms256M',     // Reduced from 512M to 256M
-            '-XX:+UseG1GC',
-            '-XX:+UseStringDeduplication',
-            '-XX:MaxGCPauseMillis=300',    // Increased for lower memory
+            '-Xmx384M',                    // Maximum 384MB (reduced)
+            '-Xms128M',                    // Initial 128MB (reduced)
+            '-XX:+UseSerialGC',            // Serial GC uses less memory
+            '-XX:MaxGCPauseMillis=500',
             '-XX:+DisableExplicitGC',
-            '-XX:+UseCompressedOops',      // Added for memory efficiency
+            '-XX:+UseCompressedOops',      // Compress object pointers
+            '-XX:+OptimizeStringConcat',   // Optimize string operations
             '-Dfile.encoding=UTF-8',
+            '-Djava.awt.headless=true',    // Headless mode
             '-jar',
             this.jarFile,
             'nogui'
