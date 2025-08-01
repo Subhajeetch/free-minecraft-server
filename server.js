@@ -1,5 +1,5 @@
 const express = require('express');
-const { spawn } = require('child_process');
+const { spawn, exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -22,6 +22,7 @@ class MinecraftCrossplayServer {
         this.startTime = null;
         this.serverReady = false;
         this.isKoyeb = process.env.KOYEB_PUBLIC_DOMAIN || process.env.NODE_ENV === 'production';
+        this.javaInstalled = false;
 
         this.setupExpress();
         this.setupRoutes();
@@ -30,8 +31,85 @@ class MinecraftCrossplayServer {
 
         // Download required files for cloud deployment
         if (this.isKoyeb) {
-            this.downloadRequiredFiles();
+            this.initializeServer();
         }
+    }
+
+    async initializeServer() {
+        console.log('🔧 Initializing server for cloud deployment...');
+
+        // Check for Java installation first
+        await this.checkAndInstallJava();
+
+        // Then download required files
+        await this.downloadRequiredFiles();
+    }
+
+    async checkAndInstallJava() {
+        return new Promise((resolve) => {
+            exec('java -version', (error, stdout, stderr) => {
+                if (error) {
+                    console.log('❌ Java not found. Attempting to install...');
+                    this.installJava().then((success) => {
+                        this.javaInstalled = success;
+                        resolve(success);
+                    }).catch(() => {
+                        this.javaInstalled = false;
+                        resolve(false);
+                    });
+                } else {
+                    console.log('✅ Java found:', stderr.split('\n')[0]);
+                    this.javaInstalled = true;
+                    resolve(true);
+                }
+            });
+        });
+    }
+
+    async installJava() {
+        return new Promise((resolve, reject) => {
+            console.log('📥 Installing OpenJDK...');
+
+            const installCommands = [
+                'apt-get update && apt-get install -y openjdk-21-jre-headless',
+                'apk add --no-cache openjdk21-jre',
+                'yum install -y java-21-openjdk-headless',
+                'dnf install -y java-21-openjdk-headless'
+            ];
+
+            let attempts = 0;
+
+            const tryInstall = () => {
+                if (attempts >= installCommands.length) {
+                    console.error('❌ Failed to install Java with all methods');
+                    resolve(false);
+                    return;
+                }
+
+                console.log(`🔄 Trying installation method ${attempts + 1}...`);
+                exec(installCommands[attempts], { timeout: 60000 }, (error, stdout, stderr) => {
+                    if (error) {
+                        console.log(`❌ Installation method ${attempts + 1} failed:`, error.message);
+                        attempts++;
+                        tryInstall();
+                    } else {
+                        console.log('✅ Java installed successfully');
+                        // Verify installation
+                        exec('java -version', (verifyError, verifyStdout, verifyStderr) => {
+                            if (verifyError) {
+                                console.log('❌ Java installation verification failed');
+                                resolve(false);
+                            } else {
+                                console.log('✅ Java installation verified:', verifyStderr.split('\n')[0]);
+                                resolve(true);
+                            }
+                        });
+                    }
+                });
+            };
+
+            tryInstall();
+        });
     }
 
     getLocalIP() {
@@ -157,7 +235,9 @@ class MinecraftCrossplayServer {
                     // Handle redirects
                     if (response.statusCode === 302 || response.statusCode === 301) {
                         file.close();
-                        fs.unlinkSync(filepath);
+                        if (fs.existsSync(filepath)) {
+                            fs.unlinkSync(filepath);
+                        }
                         return this.downloadFile(response.headers.location, filepath, description)
                             .then(resolve)
                             .catch(reject);
@@ -165,7 +245,9 @@ class MinecraftCrossplayServer {
 
                     if (response.statusCode !== 200) {
                         file.close();
-                        fs.unlinkSync(filepath);
+                        if (fs.existsSync(filepath)) {
+                            fs.unlinkSync(filepath);
+                        }
                         reject(new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`));
                         return;
                     }
@@ -180,7 +262,9 @@ class MinecraftCrossplayServer {
 
                     file.on('error', (err) => {
                         file.close();
-                        fs.unlinkSync(filepath);
+                        if (fs.existsSync(filepath)) {
+                            fs.unlinkSync(filepath);
+                        }
                         reject(err);
                     });
                 });
@@ -193,7 +277,7 @@ class MinecraftCrossplayServer {
                     reject(err);
                 });
 
-                request.setTimeout(30000, () => {
+                request.setTimeout(60000, () => {
                     request.destroy();
                     file.close();
                     if (fs.existsSync(filepath)) {
@@ -217,6 +301,7 @@ class MinecraftCrossplayServer {
             res.json({
                 status: 'healthy',
                 server: this.serverStatus,
+                java: this.javaInstalled,
                 timestamp: Date.now()
             });
         });
@@ -235,6 +320,7 @@ class MinecraftCrossplayServer {
                 javaPort: this.javaPort,
                 bedrockPort: this.bedrockPort,
                 isKoyeb: this.isKoyeb,
+                javaInstalled: this.javaInstalled,
                 connections: {
                     local: {
                         java: `localhost:${this.javaPort}`,
@@ -258,6 +344,13 @@ class MinecraftCrossplayServer {
                 return res.json({
                     success: false,
                     message: 'Server is already starting or running'
+                });
+            }
+
+            if (this.isKoyeb && !this.javaInstalled) {
+                return res.json({
+                    success: false,
+                    message: 'Java is not installed. Please wait for initialization to complete.'
                 });
             }
 
@@ -336,10 +429,21 @@ prevent-proxy-connections=false
         fs.writeFileSync(eulaPath, 'eula=true');
     }
 
-    startMinecraftServer() {
+    async startMinecraftServer() {
         if (this.minecraftProcess) {
             console.log('⚠️  Server already running');
             return;
+        }
+
+        // Double-check Java installation before starting
+        if (this.isKoyeb && !this.javaInstalled) {
+            console.log('🔄 Checking Java installation...');
+            const javaAvailable = await this.checkAndInstallJava();
+            if (!javaAvailable) {
+                console.error('❌ Java installation failed. Cannot start Minecraft server.');
+                console.log('💡 Please check the build logs and consider using multi-buildpack approach.');
+                return;
+            }
         }
 
         this.serverStatus = 'starting';
@@ -354,6 +458,7 @@ prevent-proxy-connections=false
         console.log(`🌐 Public IP: ${this.publicIP || 'Detecting...'}`);
         if (this.isKoyeb) {
             console.log('☁️  Running on Koyeb Cloud Platform');
+            console.log(`☀️  Java Available: ${this.javaInstalled ? 'Yes' : 'No'}`);
         }
         console.log('⏳ Please wait while server initializes...');
         console.log('='.repeat(60));
@@ -415,6 +520,19 @@ prevent-proxy-connections=false
             console.error(`[MC ERROR]: ${error}`);
         });
 
+        this.minecraftProcess.on('error', (error) => {
+            console.error(`❌ Failed to start Minecraft server:`, error.message);
+            if (error.code === 'ENOENT') {
+                console.error('💡 Java not found. Make sure Java is installed and in PATH.');
+                if (this.isKoyeb) {
+                    console.error('💡 Consider using multi-buildpack with Java support.');
+                }
+            }
+            this.serverStatus = 'offline';
+            this.serverReady = false;
+            this.startTime = null;
+        });
+
         this.minecraftProcess.on('close', (code) => {
             console.log(`\n⏹️  Minecraft server exited with code ${code}`);
             this.minecraftProcess = null;
@@ -425,12 +543,12 @@ prevent-proxy-connections=false
             if (code !== 0) {
                 console.log('💥 Server crashed! Check the error messages above.');
 
-                // Auto-restart on crash for Koyeb
-                if (this.isKoyeb) {
-                    console.log('🔄 Auto-restarting in 10 seconds...');
+                // Auto-restart on crash for Koyeb (but not if Java is missing)
+                if (this.isKoyeb && this.javaInstalled) {
+                    console.log('🔄 Auto-restarting in 15 seconds...');
                     setTimeout(() => {
                         this.startMinecraftServer();
-                    }, 10000);
+                    }, 15000);
                 }
             } else {
                 console.log('✅ Server stopped normally.');
