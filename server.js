@@ -14,15 +14,14 @@ class MinecraftCrossplayServer {
         // Use environment variables for Koyeb deployment
         this.javaPort = process.env.MINECRAFT_PORT || 25565;
         this.bedrockPort = process.env.BEDROCK_PORT || 19132;
-        this.webPort = process.env.PORT || 3000; // Koyeb sets this automatically
+        this.webPort = process.env.PORT || 3000;
 
         this.localIP = this.getLocalIP();
         this.publicIP = null;
-        this.serverStatus = 'offline'; // offline, starting, online, stopping
+        this.serverStatus = 'offline';
         this.startTime = null;
         this.serverReady = false;
         this.isKoyeb = process.env.KOYEB_PUBLIC_DOMAIN || process.env.NODE_ENV === 'production';
-        this.javaInstalled = false;
 
         this.setupExpress();
         this.setupRoutes();
@@ -31,9 +30,10 @@ class MinecraftCrossplayServer {
 
         // Download required files for cloud deployment
         if (this.isKoyeb) {
-            this.initializeServer();
+            this.downloadRequiredFiles();
         }
     }
+
 
     async initializeServer() {
         console.log('🔧 Initializing server for cloud deployment...');
